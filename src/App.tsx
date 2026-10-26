@@ -1,11 +1,14 @@
-﻿import { useState, useEffect } from "react";
+﻿'use client';
+
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { BubbleMenu, MenuItem } from "./components/BubbleMenu";
 import { SpotlightReveal } from "./components/SpotlightReveal";
 import { IntroGate } from "./components/IntroGate";
 import { useActiveSection } from "./hooks/useActiveSection";
-import vid1 from "@/assets/video/video1.webm";
-import vid2 from "@/assets/video/video2.mp4";
+
+const vid1 = "/video/video1.webm";
+const vid2 = "/video/video2.mp4";
 
 export default function App() {
   const [playFirst, setPlayFirst] = useState(false);

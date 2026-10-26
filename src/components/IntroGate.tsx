@@ -1,6 +1,9 @@
+'use client';
+
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import intro from "@/assets/video/intro.mp4";
+
+const intro = "/video/intro.mp4";
 
 interface IntroGateProps {
   onExitStart: () => void;
