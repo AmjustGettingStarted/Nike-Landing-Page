@@ -1,169 +1,199 @@
 'use client';
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  motion,
+  useMotionValue,
+  useSpring,
+  useTransform,
+  type MotionValue,
+} from "motion/react";
 
 interface SpotlightRevealProps {
   imageSrc: string;
   videoSrc: string;
-  isPlaying?: boolean;
-  baseRadius?: number;
   maskId: string;
-  /** When false, the spotlight mask is fully open (no cursor tracking) */
+  /** Plays/pauses the background video. */
+  isPlaying?: boolean;
+  /** Spotlight radius at full size (desktop, hovered). */
+  baseRadius?: number;
+  /** Follow the cursor and run the loop only while the hero is on screen. */
   active?: boolean;
-  /** Override the computed radius (used by scroll transitions) */
-  radiusOverride?: number;
-  /** Opacity of the entire reveal layer (used for crossfade transitions) */
-  layerOpacity?: number;
+  /** Pointer is over the hero: spotlight grows; shrinks when it leaves. */
+  hovered?: boolean;
+  /** No hover capability (touch): drift the spotlight on a slow loop. */
+  autoMotion?: boolean;
+  /** prefers-reduced-motion: no auto drift, spotlight parks at the centre. */
+  reducedMotion?: boolean;
+}
+
+const TRAILS = [
+  { stiffness: 260, damping: 30, scale: 1, opacity: 1 },
+  { stiffness: 170, damping: 26, scale: 0.86, opacity: 0.8 },
+  { stiffness: 120, damping: 24, scale: 0.72, opacity: 0.6 },
+  { stiffness: 85, damping: 22, scale: 0.58, opacity: 0.45 },
+];
+
+function TrailCircle({
+  x,
+  y,
+  radius,
+  gradientId,
+  stiffness,
+  damping,
+  scale,
+  opacity,
+}: {
+  x: MotionValue<number>;
+  y: MotionValue<number>;
+  radius: MotionValue<number>;
+  gradientId: string;
+  stiffness: number;
+  damping: number;
+  scale: number;
+  opacity: number;
+}) {
+  const cx = useSpring(x, { stiffness, damping, mass: 0.7 });
+  const cy = useSpring(y, { stiffness, damping, mass: 0.7 });
+  const r = useTransform(radius, (v) => Math.max(8, v * scale));
+  return (
+    <motion.circle cx={cx} cy={cy} r={r} fill={`url(#${gradientId})`} opacity={opacity} />
+  );
 }
 
 export function SpotlightReveal({
   imageSrc,
   videoSrc,
+  maskId,
   isPlaying = false,
   baseRadius = 380,
-  maskId,
   active = true,
-  radiusOverride,
-  layerOpacity = 1,
+  hovered = false,
+  autoMotion = false,
+  reducedMotion = false,
 }: SpotlightRevealProps) {
-  const NUM_TRAILS = 6;
   const videoRef = useRef<HTMLVideoElement>(null);
-  const pointsRef = useRef(
-    Array.from({ length: NUM_TRAILS }, () => ({ x: -2000, y: -2000 }))
-  );
-  const targetRef = useRef({ x: -2000, y: -2000 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const x = useMotionValue(-2000);
+  const y = useMotionValue(-2000);
+  const radiusTarget = useMotionValue(0);
+  const radius = useSpring(radiusTarget, { stiffness: 110, damping: 22, mass: 0.9 });
+  const [fitRadius, setFitRadius] = useState(baseRadius);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-
     if (isPlaying) {
-      video.play().catch(() => {
-        // Handle auto-play browser security block smoothly
-      });
+      video.play().catch(() => {});
     } else {
       video.pause();
     }
   }, [isPlaying]);
 
+  // Keep the spotlight proportional to the viewport so it never swallows small screens.
   useEffect(() => {
-    if (!active) return; // skip cursor tracking when dormant
-
-    // Initial center sizing setup safely
-    targetRef.current = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-
-    const handleMouseMove = (e: MouseEvent) => {
-      targetRef.current = { x: e.clientX, y: e.clientY };
+    const fit = () => {
+      const minSide = Math.min(window.innerWidth, window.innerHeight);
+      setFitRadius(Math.min(baseRadius, Math.max(130, minSide * 0.42)));
     };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [baseRadius]);
 
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches && e.touches[0]) {
-        targetRef.current = {
-          x: e.touches[0].clientX,
-          y: e.touches[0].clientY,
-        };
-      }
+  useEffect(() => {
+    if (!active) {
+      radiusTarget.set(0);
+      return;
+    }
+    const parked = autoMotion || reducedMotion;
+    radiusTarget.set(hovered || parked ? fitRadius * (parked ? 0.9 : 1) : fitRadius * 0.55);
+  }, [active, hovered, autoMotion, reducedMotion, fitRadius, radiusTarget]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !active) return;
+
+    const rect = () => el.getBoundingClientRect();
+    const center = () => {
+      const r = rect();
+      x.set(r.width / 2);
+      y.set(r.height * 0.45);
     };
+    center();
 
-    window.addEventListener("mousemove", handleMouseMove, { passive: true });
-    window.addEventListener("touchmove", handleTouchMove, { passive: true });
+    let lastTouch = 0;
+    const onPointerMove = (e: PointerEvent) => {
+      const r = rect();
+      x.set(e.clientX - r.left);
+      y.set(e.clientY - r.top);
+      if (e.pointerType !== "mouse") lastTouch = performance.now();
+    };
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
 
-    let animationFrameId: number;
-    const animate = () => {
-      const points = pointsRef.current;
-
-      // Interpolate leading anchor element with exponential easing
-      points[0].x += (targetRef.current.x - points[0].x) * 0.2;
-      points[0].y += (targetRef.current.y - points[0].y) * 0.2;
-
-      // Propagate downstream physics layers for the trailing lag
-      for (let i = 1; i < points.length; i++) {
-        points[i].x += (points[i - 1].x - points[i].x) * 0.35;
-        points[i].y += (points[i - 1].y - points[i].y) * 0.35;
-      }
-
-      // Draw positions straight into the DOM elements safely for 60/120fps performance without triggering React re-renders
-      for (let i = 0; i < points.length; i++) {
-        const circle = document.getElementById(`${maskId}-trail-${i}`);
-        if (circle) {
-          circle.setAttribute("cx", points[i].x.toString());
-          circle.setAttribute("cy", points[i].y.toString());
+    let raf = 0;
+    if (autoMotion && !reducedMotion) {
+      const start = performance.now();
+      const loop = (now: number) => {
+        // Pause the drift for a moment after a touch so the finger can steer it.
+        if (now - lastTouch > 1500) {
+          const t = (now - start) / 1000;
+          const r = rect();
+          x.set(r.width * (0.5 + 0.32 * Math.sin(t * 0.45)));
+          y.set(r.height * (0.45 + 0.22 * Math.sin(t * 0.7 + 1.2)));
         }
-      }
-      animationFrameId = requestAnimationFrame(animate);
-    };
-
-    animate();
+        raf = requestAnimationFrame(loop);
+      };
+      raf = requestAnimationFrame(loop);
+    }
 
     return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("touchmove", handleTouchMove);
-      cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("pointermove", onPointerMove);
+      cancelAnimationFrame(raf);
     };
-  }, [maskId, active]);
+  }, [active, autoMotion, reducedMotion, x, y]);
 
-  // Compute effective radius: use override if provided, otherwise base - offset
-  const effectiveRadius = (i: number) => {
-    const base = radiusOverride ?? baseRadius;
-    return Math.max(10, base - i * 40);
-  };
+  const gradientId = `${maskId}-gradient`;
 
   return (
     <div
       ref={containerRef}
       className="absolute inset-0 w-full h-full bg-brand-dark pointer-events-none overflow-hidden select-none"
       id={`spotlight-container-${maskId}`}
-      style={{ opacity: layerOpacity }}
     >
-      {/* Video Foundation Layer */}
-      <div className="absolute inset-0 w-full h-full overflow-hidden pointer-events-none">
-        <video
-          ref={videoRef}
-          src={videoSrc}
-          className="absolute inset-0 w-full h-full object-cover opacity-80"
-          muted
-          loop
-          playsInline
-        />
-      </div>
+      <video
+        ref={videoRef}
+        src={videoSrc}
+        className="absolute inset-0 w-full h-full object-cover opacity-80"
+        muted
+        loop
+        playsInline
+        preload="metadata"
+      />
 
-      {/* Structural SVG Mask Composite Layer */}
-      <svg
-        className="absolute inset-0 w-full h-full mix-blend-normal"
-        xmlns="http://www.w3.org/2000/svg"
-      >
+      <svg className="absolute inset-0 w-full h-full" xmlns="http://www.w3.org/2000/svg">
         <defs>
-          <radialGradient id={`${maskId}-gradient`}>
+          <radialGradient id={gradientId}>
             <stop offset="0%" stopColor="black" stopOpacity="1" />
-            <stop offset="55%" stopColor="black" stopOpacity="0.85" />
+            <stop offset="40%" stopColor="black" stopOpacity="0.96" />
+            <stop offset="72%" stopColor="black" stopOpacity="0.55" />
             <stop offset="100%" stopColor="black" stopOpacity="0" />
           </radialGradient>
-          <mask
-            id={maskId}
-            maskContentUnits="userSpaceOnUse"
-            x="0"
-            y="0"
-            width="100%"
-            height="100%"
-          >
+          <mask id={maskId} maskContentUnits="userSpaceOnUse" x="0" y="0" width="100%" height="100%">
             <rect width="100%" height="100%" fill="white" />
-            {Array.from({ length: NUM_TRAILS })
-              .reverse()
-              .map((_, revIdx) => {
-                const i = NUM_TRAILS - 1 - revIdx;
-                return (
-                  <circle
-                    key={`trail-${i}`}
-                    id={`${maskId}-trail-${i}`}
-                    cx="-2000"
-                    cy="-2000"
-                    r={effectiveRadius(i)}
-                    fill={`url(#${maskId}-gradient)`}
-                    opacity={1 - i * 0.12}
-                  />
-                );
-              })}
+            {[...TRAILS].reverse().map((t) => (
+              <TrailCircle
+                key={t.stiffness}
+                x={x}
+                y={y}
+                radius={radius}
+                gradientId={gradientId}
+                stiffness={t.stiffness}
+                damping={t.damping}
+                scale={t.scale}
+                opacity={t.opacity}
+              />
+            ))}
           </mask>
         </defs>
         <image

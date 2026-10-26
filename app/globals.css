@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -6,4 +6,34 @@
   --font-serif: "Instrument Serif", serif;
   --color-brand-orange: #DA3A16;
   --color-brand-dark: #050505;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: var(--color-brand-dark);
+}
+
+html,
+body {
+  overflow-x: clip;
+}
+
+body {
+  color: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.marquee-track {
+  animation: marquee 30s linear infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .marquee-track { animation: none; }
 }
